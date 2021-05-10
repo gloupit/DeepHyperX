@@ -47,6 +47,23 @@ def get_model(name, **kwargs):
         criterion = nn.CrossEntropyLoss(weight=kwargs["weights"])
         kwargs.setdefault("epoch", 100)
         kwargs.setdefault("batch_size", 100)
+    elif name =='hsi':
+        kwargs.setdefault('patch_size', 1)
+        center_pixel = True
+        model = HSI(n_bands, n_classes, n_indices=20, k_bands=3, pretrained_indices=kwargs['pretrained_indices'], device=kwargs['device'])
+        means = list(model.attention['att-0'].parameters())
+        params = list(model.fc1.parameters())
+        for i in range(len(kwargs['pretrained_indices'])+1):
+            params += list(model.weight['weight-{}'.format(i)].parameters())
+
+        lr = kwargs.setdefault('learning_rate', 0.01)
+        optimizer = optim.Adam([
+                {'params': params, 'weight_decay': 0},
+                {'params': means, 'lr': 0.1}
+            ], lr=lr)
+        criterion = nn.CrossEntropyLoss(weight=kwargs['weights'])
+        kwargs.setdefault('epochs', 100)
+        kwargs.setdefault('batch_size', 100)
     elif name == "hamida":
         patch_size = kwargs.setdefault("patch_size", 5)
         center_pixel = True
@@ -237,6 +254,144 @@ class Baseline(nn.Module):
         if self.use_dropout:
             x = self.dropout(x)
         x = self.fc4(x)
+        return x
+
+class Attention(nn.Module):
+    """
+    Attention vectors 
+    """
+    def __init__(self, input_channels, k_bands, n_indices, device, sigma=0.5):
+        """
+        Args:
+            input_channels: int, number of spectral bands
+            k_bands: int, number of bands of attention
+            n_indices: int, number of indices
+            device: 'cpu' or 'cuda' 
+            sigma: float, hyperparameter for the width of the attention vector
+        """
+        super(Attention, self).__init__()
+
+        self.input_channels  = input_channels
+        self.k_bands   = k_bands
+        self.n_indices = n_indices
+
+        self.params = nn.Parameter(torch.Tensor(1, k_bands, n_indices))
+        self.std    = sigma * torch.ones_like(self.params).to(device)
+        self.bands  = torch.ones((input_channels, k_bands, n_indices))
+        self.bands  = (self.bands * torch.tensor(range(1,input_channels+1)).unsqueeze(-1).unsqueeze(-1)).to(device)
+        self.pi     = torch.tensor(np.pi).item()
+
+        self.reset_parameters()
+
+
+    def reset_parameters(self):
+        init.uniform_(self.params, a=0, b=self.input_channels)
+
+    def extra_repr(self) -> str:
+        return 'n_indices={}, k_bands={}'.format(
+            self.n_indices, self.k_bands)
+
+    def forward(self, input):
+        input = input.unsqueeze(-1).unsqueeze(-1)
+
+        #Clamp attention means to [0, input_channels]
+        mu    = torch.clamp(self.params[0,:,:], 0, self.input_channels)
+
+        #Compute attention matrix
+        attention = (1/(self.std*(2*self.pi)**0.5))*torch.exp(-0.5*((self.bands-mu)/self.std)**2)
+        attention = attention.unsqueeze(0)
+
+        output = input*attention
+        output = torch.sum(output, dim=1)
+        return output
+
+
+class Indice(nn.Module):
+    """
+    Statistical Hyperspectral Indice
+    """
+    def __init__(self, k_bands, n_indices):
+        super(Indice, self).__init__()
+
+        self.weight = nn.Parameter(torch.Tensor(k_bands, n_indices))
+        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+
+    def normalize(self, x):
+        return torch.sum(x, dim=1)
+
+    def forward(self, x):
+        return torch.sum(x*self.weight, dim=1)
+
+
+class HSI(nn.Module):
+    """
+    HSI network
+    """
+    def __init__(self, input_channels, n_classes, n_indices, k_bands, pretrained_indices, device, dropout=0):
+        """
+        Args:
+            input_channels: int, number of spectral bands
+            n_classes: int, number of classes
+            n_indices: int, number of indices
+            k_bands: int, number of bands of attention for every indices
+            pretrained_indices: list, paths to models parameters to restore
+            device: 'cpu' or 'cuda'
+            dropout: float, probability of dropout 
+        """
+        super(HSI, self).__init__()
+
+        self.input_channels = input_channels
+        self.n_indices      = n_indices
+
+        self.attention      = nn.ModuleDict({'att-0': Attention(input_channels, k_bands, n_indices, device)})
+        self.weight         = nn.ModuleDict({'weight-0': Indice(k_bands, n_indices)})
+
+        if pretrained_indices:
+            for i, pth in enumerate(pretrained_indices):
+                checkpoint = torch.load(pth)
+                checkpoint = checkpoint['state_dict']
+
+                indices = checkpoint['attention.att-0.params']
+                att = Attention(input_channels, indices.shape[1], indices.shape[2], device)
+                att.params.data = indices
+                att.requires_grad_(True)
+                self.attention.update({'att-{}'.format(i+1): att})
+
+                weights = checkpoint['weight.weight-0.weight']
+                weight = Indice(*weights.shape)
+                weight.requires_grad_(True)
+                self.weight.update({'weight-{}'.format(i+1): weight})
+
+        self.N_indices = self.get_n_indices()
+
+        self.fc1            = nn.Linear(self.N_indices, n_classes)
+        self.dropout        = nn.Dropout(p=dropout)
+
+    def get_n_indices(self):
+        n = 0
+        for att in self.attention.values():
+            n += att.n_indices
+        return n
+
+    def indices(self, x):
+        X = {}
+
+        for i in range(len(self.attention)):
+            x_ = self.attention['att-{}'.format(i)](x)
+            X[i] = self.weight['weight-{}'.format(i)](x_)
+
+        x = X[0]
+        if len(X) > 1:
+            for i in range(1, len(X)):
+                x = torch.cat((x, X[i]), dim=1)
+
+        x = F.relu(x)
+        return x
+
+    def forward(self, x):
+        x = self.indices(x)
+        x = self.dropout(x)
+        x = self.fc1(x)
         return x
 
 

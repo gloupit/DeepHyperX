@@ -29,6 +29,7 @@ from skimage import io
 import seaborn as sns
 import visdom
 
+import ast
 import os
 from utils import (
     metrics,
@@ -161,6 +162,12 @@ group_train.add_argument(
     default=1,
     help="Sliding window step stride during inference (default = 1)",
 )
+group_train.add_argument(
+    "--pretrained_indices",
+    type=str,
+    default='[]',
+    help="Paths to pretrained indices for HSI model",
+)
 # Data augmentation parameters
 group_da = parser.add_argument_group("Data augmentation")
 group_da.add_argument(
@@ -274,6 +281,7 @@ hyperparams.update(
         "n_bands": N_BANDS,
         "ignored_labels": IGNORED_LABELS,
         "device": CUDA_DEVICE,
+        "pretrained_indices": ast.literal_eval(args.pretrained_indices)
     }
 )
 hyperparams = dict((k, v) for k, v in hyperparams.items() if v is not None)
