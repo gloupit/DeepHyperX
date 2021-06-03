@@ -50,6 +50,9 @@ from models import get_model, train, test, save_model
 
 import argparse
 
+# Debug 
+import pdb
+
 dataset_names = [
     v["name"] if "name" in v.keys() else k for k, v in DATASETS_CONFIG.items()
 ]

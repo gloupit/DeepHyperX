@@ -198,6 +198,23 @@ def get_model(name, **kwargs):
         model = model.to(device)
         optimizer = optim.Adadelta(model.parameters(), lr=lr)
         criterion = nn.CrossEntropyLoss(weight=kwargs["weights"])
+    elif name == 'cnn1D':
+        kwargs.setdefault('patch_size', 1)
+        center_pixel = True
+        CONVS = {
+            1: {'out_channels': 8, 'kernel_size': 4, 'padding': 0, 'stride': 1, 'pooling': 4, 'activation': F.relu},
+            2: {'out_channels': 16, 'kernel_size': 8, 'padding': 0, 'stride': 1, 'pooling': 2, 'activation': F.relu},
+            3: {'out_channels': 32, 'kernel_size': 8, 'padding': 0, 'stride':1, 'pooling': None, 'activation': F.relu}    
+            }
+        FC    = {1:{'h1': 100, 'h2': n_classes, 'activation': lambda x: x}}
+        conv_PARAMS = {'CONVS': CONVS, 'FC': FC, 'n_bands': n_bands}
+        model = CNN1D(**conv_PARAMS)
+        lr = kwargs.setdefault('learning_rate', 0.001)
+        optimizer = optim.Adam(model.parameters(), lr=lr)
+        criterion = nn.CrossEntropyLoss(weight=kwargs['weights'])
+        kwargs.setdefault('epoch', 100)
+        kwargs.setdefault('batch_size', 100)
+        
     else:
         raise KeyError("{} model is unknown.".format(name))
 
@@ -1149,6 +1166,70 @@ class MouEtAl(nn.Module):
         x = self.fc(x)
         return x
 
+class CNN1D(nn.Module):
+    def __init__(self,n_bands, CONVS,FC):
+        super(CNN1D, self).__init__()
+
+        self.CONVS = nn.ModuleDict({})
+        self.FC    = nn.ModuleDict({})
+        self.input_size = n_bands
+
+        self.pooling_layers  = []
+        self.conv_activation = []
+        self.fc_activation   = []
+
+        for i, conv in CONVS.items():
+            self.CONVS['conv{}'.format(i)] = nn.Conv1d(in_channels=1, out_channels=conv['out_channels'],
+                                                       kernel_size=conv['kernel_size'],padding=conv['padding'],
+                                                       stride=conv['stride'])
+            if conv['pooling']:
+                self.pooling_layers.append(nn.MaxPool1d(conv['pooling']))
+            else:
+                self.pooling_layers.append(lambda x: x)
+            self.conv_activation.append(conv['activation'])
+
+        self.features_size = self._get_final_flattened_size()
+        self.FC['fc0'] = nn.Linear(self.features_size,FC[1]['h1'])
+        self.fc_activation.append(F.relu)
+        for i, fc in FC.items():
+            self.FC['fc{}'.format(i)] = nn.Linear(fc['h1'],fc['h2'])
+            self.fc_activation.append(fc['activation'])
+
+    def forward(self, x):
+        x   = x.unsqueeze(1)
+        OUT = {}
+        #CONVOLUTIONS
+        for i, conv in enumerate(self.CONVS.values()):
+            out = conv(x)
+            out = self.pooling_layers[i](out)
+            OUT[i] = self.conv_activation[i](out).squeeze(-1).reshape(1,-1)
+        #CONCATENING CONVOLUTIONS OUTPUTS INTO ONE VECTOR
+        outs = tuple([out for out in OUT.values()])
+        if len(outs) > 1:
+            out  = torch.cat(outs,1)
+        else:
+            out = outs[0]
+        out  = out.view(-1,self.features_size)
+
+        #FORWARD THROUGH FULLY CONNECTED LAYERS
+        for i, fc in enumerate(self.FC.values()):
+            out = fc(out)
+            out = self.fc_activation[i](out)
+        return out
+
+    def _get_final_flattened_size(self):
+        with torch.no_grad():
+            x   = torch.zeros((1, 1, self.input_size))
+            OUT = {}
+            for i, conv in enumerate(self.CONVS.values()):
+                out = conv(x)
+                out = self.pooling_layers[i](out)
+                OUT[i] = self.conv_activation[i](out).squeeze(-1).reshape(1,-1)
+            outs = tuple([out for out in OUT.values()])
+            out  = torch.cat(outs,1)
+            s    = out.shape[1]
+        return s
+
 
 def train(
     net,
@@ -1219,6 +1300,7 @@ def train(
                 raise ValueError(
                     'supervision mode "{}" is unknown.'.format(supervision)
                 )
+
             loss.backward()
             optimizer.step()
 
