@@ -7,6 +7,18 @@ CUSTOM_DATASETS_CONFIG = {
         "gt": "2018_IEEE_GRSS_DFC_GT_TR.tif",
         "download": False,
         "loader": lambda folder: dfc2018_loader(folder),
+    },
+    "Mauzac": {
+        "img": "mauzac_img.npy",
+        "gt": "mauzac_gt.npy",
+        "download": False,
+        "loader": lambda folder: mauzac_loader(folder),
+    },
+    "Toulouse": {
+        "img": "toulouse_img.npy",
+        "gt": "toulouse_gt.npy",
+        "download": False,
+        "loader": lambda folder: toulouse_loader(folder),
     }
 }
 
@@ -39,7 +51,60 @@ def dfc2018_loader(folder):
         "Unpaved parking lots",
         "Cars",
         "Trains",
-        "Stadium seats",
+        "Stadium seats"
+    ]
+    ignored_labels = [0]
+    palette = None
+    return img, gt, rgb_bands, ignored_labels, label_values, palette
+
+
+def mauzac_loader(folder):
+    img = open_file(folder + "mauzac_img.npy")
+    gt = open_file(folder + "mauzac_gt.npy")
+    gt = gt.astype("uint8")
+
+    rgb_bands = (70, 50, 25)
+
+    label_values = [
+        'Untitled', 
+        'Vegetation shadows', 
+        'High vegetation', 
+        'Ground vegetation', 
+        'Dry vegetation',
+        'Bare soil', 
+        'Water body', 
+        'Swimming pool', 
+        'Pool cover', 
+        'Curbstone', 
+        'Tile', 
+        'Asphalt', 
+        'Other shadows'
+    ]
+    ignored_labels = [0]
+    palette = None
+    return img, gt, rgb_bands, ignored_labels, label_values, palette
+
+def toulouse_loader(folder):
+    img = open_file(folder + "toulouse_img.npy")
+    gt = open_file(folder + "toulouse_gt.npy")
+    gt = gt.astype("uint8")
+
+    rgb_bands = (70, 50, 25)
+
+    label_values = [
+        'Untitled', 
+        'Vegetation shadows', 
+        'High vegetation', 
+        'Ground vegetation', 
+        'Dry vegetation',
+        'Bare soil', 
+        'Water body', 
+        'Swimming pool', 
+        'Pool cover', 
+        'Curbstone', 
+        'Tile', 
+        'Asphalt', 
+        'Other shadows'
     ]
     ignored_labels = [0]
     palette = None

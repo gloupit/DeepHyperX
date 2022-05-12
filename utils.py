@@ -39,6 +39,8 @@ def open_file(dataset):
     elif ext == '.hdr':
         img = spectral.open_image(dataset)
         return img.load()
+    elif ext == '.npy':
+        return np.load(dataset)
     else:
         raise ValueError("Unknown file format: {}".format(ext))
 
