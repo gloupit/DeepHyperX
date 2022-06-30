@@ -1229,6 +1229,8 @@ class CNN1D(nn.Module):
             out  = torch.cat(outs,1)
             s    = out.shape[1]
         return s
+    
+    
 
 
 def train(
@@ -1371,7 +1373,7 @@ def train(
             )
 
 
-def save_model(model, model_name, dataset_name, **kwargs):
+def save_model(model, model_name, dataset_name, option='', **kwargs):
     model_dir = "./checkpoints/" + model_name + "/" + dataset_name + "/"
     """
     Using strftime in case it triggers exceptions on windows 10 system
@@ -1380,13 +1382,13 @@ def save_model(model, model_name, dataset_name, **kwargs):
     if not os.path.isdir(model_dir):
         os.makedirs(model_dir, exist_ok=True)
     if isinstance(model, torch.nn.Module):
-        filename = time_str + "_epoch{epoch}_{metric:.2f}".format(
+        filename = option +'_'+ time_str + "_epoch{epoch}_{metric:.2f}".format(
             **kwargs
         )
         tqdm.write("Saving neural network weights in {}".format(filename))
         torch.save(model.state_dict(), model_dir + filename + ".pth")
     else:
-        filename = time_str
+        filename = option +'_'+ time_str
         tqdm.write("Saving model params in {}".format(filename))
         joblib.dump(model, model_dir + filename + ".pkl")
 

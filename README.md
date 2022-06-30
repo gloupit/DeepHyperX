@@ -80,22 +80,22 @@ An example dataset folder has the following structure:
 ```
 Datasets
 ├── Botswana
-│   ├── Botswana_gt.mat
-│   └── Botswana.mat
+│   ├── Botswana_gt.mat
+│   └── Botswana.mat
 ├── DFC2018_HSI
-│   ├── 2018_IEEE_GRSS_DFC_GT_TR.tif
-│   ├── 2018_IEEE_GRSS_DFC_HSI_TR
-│   ├── 2018_IEEE_GRSS_DFC_HSI_TR.aux.xml
-│   ├── 2018_IEEE_GRSS_DFC_HSI_TR.HDR
+│   ├── 2018_IEEE_GRSS_DFC_GT_TR.tif
+│   ├── 2018_IEEE_GRSS_DFC_HSI_TR
+│   ├── 2018_IEEE_GRSS_DFC_HSI_TR.aux.xml
+│   ├── 2018_IEEE_GRSS_DFC_HSI_TR.HDR
 ├── IndianPines
-│   ├── Indian_pines_corrected.mat
-│   ├── Indian_pines_gt.mat
+│   ├── Indian_pines_corrected.mat
+│   ├── Indian_pines_gt.mat
 ├── KSC
-│   ├── KSC_gt.mat
-│   └── KSC.mat
+│   ├── KSC_gt.mat
+│   └── KSC.mat
 ├── PaviaC
-│   ├── Pavia_gt.mat
-│   └── Pavia.mat
+│   ├── Pavia_gt.mat
+│   └── Pavia.mat
 └── PaviaU
     ├── PaviaU_gt.mat
     └── PaviaU.mat

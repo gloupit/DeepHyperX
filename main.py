@@ -23,7 +23,16 @@ from torchsummary import summary
 import numpy as np
 import sklearn.svm
 import sklearn.model_selection
+from sklearn.decomposition import PCA
+from sklearn.ensemble import RandomForestClassifier
 from skimage import io
+
+# museotoolbox
+# from museotoolbox.cross_validation import SpatialLeaveAsideOut
+# from museotoolbox import datasets,processing
+
+#Attributes Profiles
+import compute_profiles
 
 # Visualization
 import seaborn as sns
@@ -44,11 +53,16 @@ from utils import (
     show_results,
     compute_imf_weights,
     get_device,
+    save_prediction,
+    save_components,
+    spatial_k_fold,
 )
 from datasets import get_dataset, HyperX, open_file, DATASETS_CONFIG
 from models import get_model, train, test, save_model
 
 import argparse
+
+import joblib
 
 # Debug 
 import pdb
@@ -84,12 +98,60 @@ parser.add_argument(
     "liu (3D semi-supervised CNN), "
     "mou (1D RNN)",
 )
+
+parser.add_argument(
+    "--method", 
+    type=str, 
+    default='GRAY', 
+    help="Method to use with AP model (Attributes Profiles):\n"
+    "GRAY (only 4 PCA)"
+    "AP"
+    "MAX"
+    "MIN"
+    "SDAP"
+    "LFAP"
+    "LFSDAP"
+    "HAP"
+    "HSDAP"
+    "ALPHA"
+    "OMEGA"
+    "FP_AREA or FP_AREA_MEAN or FP_MEAN"
+)
+
+parser.add_argument(
+    "--adj",
+    type=int,
+    help="Adjacency (for AP model), by default 4, can be 8",
+    default=4,
+)
+
+parser.add_argument(
+    "--quantization",
+    type=int,
+    help="Quantization (for AP model) by default 8, can be 8",
+    default=8,
+)
+
+parser.add_argument(
+    "--nb_tree",
+    type=int,
+    help="Number of Tree (for AP model) by default 100",
+    default=100,
+)
+
+parser.add_argument(
+    "--nb_PCA",
+    type=int,
+    help="Number of PCA (for AP model) by default 4",
+    default=4,
+)
+
 parser.add_argument(
     "--folder",
     type=str,
     help="Folder where to store the "
     "datasets (defaults to the current working directory).",
-    default="./Datasets/",
+    default="/scratchs/gloupit/Datasets/",
 )
 parser.add_argument(
     "--cuda",
@@ -103,6 +165,29 @@ parser.add_argument(
     type=str,
     default=None,
     help="Weights to use for initialization, e.g. a checkpoint",
+)
+
+parser.add_argument(
+    "--restore_pca",
+    type=str,
+    default=None,
+    help="PCA to use for testing",
+)
+
+parser.add_argument(
+    "--only_test",
+    action="store_true",
+    # type=bool,
+    # default=False,
+    help="For applying a test without training",
+)
+
+parser.add_argument(
+    "--cv",
+    action="store_true",
+    # type=bool,
+    # default=False,
+    help="For using Cross Validation and GridSearch for RF",
 )
 
 # Dataset options
@@ -212,6 +297,16 @@ MIXTURE_AUGMENTATION = args.mixture_augmentation
 DATASET = args.dataset
 # Model name
 MODEL = args.model
+# Method name (in case of AP model)
+METHOD = args.method
+# Adjacency (in case of AP model)
+ADJ = args.adj
+# Quantization (in case of AP model)
+QUANTIZATION = args.quantization
+# Number of Trees (in case of AP model)
+NB_TREE = args.nb_tree
+# Number of PCA (in case of AP model)
+NB_PCA = args.nb_PCA
 # Number of runs (for cross-validation)
 N_RUNS = args.runs
 # Spatial context size (number of neighbours in each spatial direction)
@@ -226,22 +321,32 @@ EPOCH = args.epoch
 SAMPLING_MODE = args.sampling_mode
 # Pre-computed weights to restore
 CHECKPOINT = args.restore
+# Pre-computed PCA
+PCA_COMPONENTS = args.restore_pca
 # Learning rate for the SGD
 LEARNING_RATE = args.lr
 # Automated class balancing
 CLASS_BALANCING = args.class_balancing
 # Training ground truth file
-TRAIN_GT = args.train_set
+TRAIN_GT = args.train_set 
 # Testing ground truth file
 TEST_GT = args.test_set
 TEST_STRIDE = args.test_stride
+#Only testing
+ONLY_TEST = args.only_test
+#CrossValidation
+CV = args.cv
+    
 
 if args.download is not None and len(args.download) > 0:
     for dataset in args.download:
         get_dataset(dataset, target_folder=FOLDER)
     quit()
 
-viz = visdom.Visdom(env=DATASET + " " + MODEL)
+if MODEL == 'AP':
+    viz = visdom.Visdom(env=DATASET + " " + MODEL + " " + METHOD)
+else:
+    viz = visdom.Visdom(env=DATASET + " " + MODEL)
 if not viz.check_connection:
     print("Visdom is not connected. Did you run 'python -m visdom.server' ?")
 
@@ -276,6 +381,19 @@ def convert_to_color(x):
 def convert_from_color(x):
     return convert_from_color_(x, palette=invert_palette)
 
+#Paths for model selection
+path = FOLDER + DATASET + "/split/"
+train_split_paths = [path + "train_gt1.npy",
+                     path + "train_gt2.npy",
+                     path + "train_gt3.npy",
+                     path + "train_gt4.npy",
+                     path + "train_gt5.npy"]
+
+val_split_paths =   [path + "val_gt1.npy",
+                     path + "val_gt2.npy",
+                     path + "val_gt3.npy",
+                     path + "val_gt4.npy",
+                     path + "val_gt5.npy"]
 
 # Instantiate the experiment based on predefined networks
 hyperparams.update(
@@ -316,6 +434,8 @@ for run in range(N_RUNS):
     else:
         # Sample random training spectra
         train_gt, test_gt = sample_gt(gt, SAMPLE_PERCENTAGE, mode=SAMPLING_MODE)
+    if ONLY_TEST:
+        test_gt = gt
     print(
         "{} samples selected (over {})".format(
             np.count_nonzero(train_gt), np.count_nonzero(gt)
@@ -325,8 +445,10 @@ for run in range(N_RUNS):
         "Running an experiment with the {} model".format(MODEL),
         "run {}/{}".format(run + 1, N_RUNS),
     )
-
-    display_predictions(convert_to_color(train_gt), viz, caption="Train ground truth")
+    
+    if not ONLY_TEST:
+        display_predictions(convert_to_color(train_gt), viz, caption="Train ground truth")
+    
     display_predictions(convert_to_color(test_gt), viz, caption="Test ground truth")
 
     if MODEL == "SVM_grid":
@@ -349,8 +471,140 @@ for run in range(N_RUNS):
         clf = sklearn.svm.SVC(class_weight=class_weight)
         clf.fit(X_train, y_train)
         save_model(clf, MODEL, DATASET)
+        
         prediction = clf.predict(img.reshape(-1, N_BANDS))
         prediction = prediction.reshape(img.shape[:2])
+    elif MODEL == 'AP':
+        
+        # method = 'FP_MEAN'
+        nb_PCA = NB_PCA
+        adj = ADJ
+        quantization = QUANTIZATION
+        nb_tree = NB_TREE
+        spatial_resolution = 0.55
+        nb_thresholds = 14
+        
+        d1, d2, d3 = img.shape
+        
+        #Preprocessing
+        pca = PCA(n_components=nb_PCA)
+        pca.fit(img.reshape(-1, img.shape[-1]))
+        # img_reshape = img.reshape(-1, img.shape[-1])
+        # pdb.set_trace()
+        
+        if PCA_COMPONENTS != None:
+            pca_components = np.load(PCA_COMPONENTS)
+            imgR = np.dot(img,np.transpose(pca_components))
+        else:
+            if not ONLY_TEST:
+                save_components(pca.components_, MODEL, METHOD, DATASET)
+            imgR = np.dot(img,np.transpose(pca.components_))
+            
+        
+        img_PCA_ = np.reshape(imgR,(d1,d2,nb_PCA))
+        
+        #Normalization
+        delta = 1 / (np.amax(img_PCA_) - np.amin(img_PCA_))
+        img_PCA  = img_PCA_ * delta + (-np.amin(img_PCA_)*delta)
+    
+        if (quantization == 8):
+            img_PCA = np.double(np.round(img_PCA*255))
+        elif (quantization == 16):
+            img_PCA = np.double(np.round(img_PCA*65535))
+        
+        lamb_area = compute_profiles.compute_area_thresholds(spatial_resolution, nb_thresholds)
+        lamb_area = np.dot(lamb_area,1/30)
+        # lamb_area=[770, 1538, 2307, 3076, 3846, 4615, 5384, 6153, 6923, 7692, 8461, 9230, 10000, 10769]
+        lamb_moi = [0.2, 0.3, 0.4, 0.5]
+        
+        if   (METHOD == "GRAY"):
+            features = compute_profiles.compute_GRAY(img_PCA)
+        elif (METHOD == "AP"):
+            features = compute_profiles.compute_AP(img_PCA, lamb_area, lamb_moi, adj)
+        elif (METHOD == "MAX"):
+            features = compute_profiles.compute_MAX(img_PCA, lamb_area, lamb_moi, adj)
+        elif (METHOD == "MIN"):
+            features = compute_profiles.compute_MIN(img_PCA, lamb_area, lamb_moi, adj)
+        elif (METHOD == "SDAP"):
+            features = compute_profiles.compute_SDAP(img_PCA, lamb_area, lamb_moi, adj)
+        elif (METHOD == "LFAP"):
+            features = compute_profiles.compute_LFAP(img_PCA, lamb_area, lamb_moi, adj)
+        elif (METHOD == "LFSDAP"):
+            features = compute_profiles.compute_LFSDAP(img_PCA, lamb_area, lamb_moi, adj)
+        elif (METHOD == "HAP"):
+            features = compute_profiles.compute_HAP(img_PCA, lamb_area, lamb_moi, adj)
+        elif (METHOD == "HSDAP"):
+            features = compute_profiles.compute_HSDAP(img_PCA, lamb_area, lamb_moi, adj)
+        elif (METHOD == "ALPHA"):
+            features = compute_profiles.compute_ALPHA(img_PCA, lamb_area, lamb_moi, adj)
+        elif (METHOD == "OMEGA"):
+            features = compute_profiles.compute_OMEGA(img_PCA, lamb_area, lamb_moi, adj)
+        elif (METHOD == "FP_AREA" or METHOD == "FP_AREA_MEAN" or METHOD == "FP_MEAN"):
+            features = compute_profiles.compute_FP(img_PCA, lamb_area, lamb_moi, adj, METHOD)
+        else:
+            print("Method not implemented!")
+
+        features = features.transpose(1, 2, 0)
+        # pdb.set_trace()
+        
+        if not ONLY_TEST:    
+            X_train, y_train = build_dataset(features, train_gt, ignored_labels=IGNORED_LABELS)
+            # pdb.set_trace()
+            
+            if not CV:
+                clf = RandomForestClassifier(n_estimators=nb_tree, random_state=0)
+                clf.fit(X_train,y_train)
+                save_model(clf, MODEL, DATASET)
+            else:
+                param_grid = {'max_depth': [10,50,100],
+                      'max_features': ['sqrt', 'log2'],
+                      'min_samples_leaf': [1, 2, 4],
+                      'min_samples_split': [2, 5, 10],
+                      'n_estimators': [10,100,200]}
+                
+                scores = ["precision", "recall"]
+                for score in scores:
+                    print("# Tuning hyper-parameters for %s" % score)
+                    print()
+                    truc = spatial_k_fold(train_split_paths, val_split_paths)
+                    # pdb.set_trace()
+                    # clf = sklearn.model_selection.GridSearchCV(RandomForestClassifier(random_state=0), param_grid , cv=spatial_k_fold(train_split_paths, val_split_paths),scoring="%s_macro" % score)
+                    # clf = sklearn.model_selection.RandomizedSearchCV(RandomForestClassifier(random_state=0), param_distributions=param_grid, n_iter = 1, cv=spatial_k_fold(train_split_paths, val_split_paths),scoring="%s_macro" % score,random_state=0)
+                    clf = sklearn.model_selection.RandomizedSearchCV(RandomForestClassifier(random_state=0), param_distributions=param_grid, n_iter = 1)#, cv=spatial_k_fold(train_split_paths, val_split_paths))
+                    print(clf.get_params())
+                    # clf.fit(X_train, y=y_train,groups=None, fit_params=clf.get_params)   #build the forest of trees
+                    # pdb.set_trace()
+                    clf.fit(X_train,y=y_train)
+                    print("Best parameters set found on development set:")
+                    print()
+                    print(clf.best_params_)
+                    print()
+                    print("Grid scores on development set:")
+                    print()
+                    means = clf.cv_results_["mean_test_score"]
+                    stds = clf.cv_results_["std_test_score"]
+                    for mean, std, params in zip(means, stds, clf.cv_results_["params"]):
+                        print("%0.3f (+/-%0.03f) for %r" % (mean, std * 2, params))
+                    print()
+                
+                    print("Detailed classification report:")
+                    print()
+                    print("The model is trained on the full development set.")
+                    print("The scores are computed on the full evaluation set.")
+                    print()
+                    # y_true, y_pred = test_gt, clf.predict(features.reshape(-1, features.shape[2]))
+                    # print(sklearn.metrics.classification_report(y_true, y_pred))
+                    # print()
+                    save_model(clf, MODEL, DATASET, score)
+                
+                # pdb.set_trace()
+            # save_model(clf, MODEL, DATASET)
+        else:
+            clf = joblib.load(CHECKPOINT)
+            
+        prediction = clf.predict(features.reshape(-1, features.shape[2]))
+        prediction = prediction.reshape(features.shape[:2])
+        
     elif MODEL == "SGD":
         X_train, y_train = build_dataset(img, train_gt, ignored_labels=IGNORED_LABELS)
         X_train, y_train = sklearn.utils.shuffle(X_train, y_train)
@@ -376,7 +630,8 @@ for run in range(N_RUNS):
         clf.fit(X_train, y_train)
         save_model(clf, MODEL, DATASET)
         prediction = clf.predict(img.reshape(-1, N_BANDS))
-        prediction = prediction.reshape(img.shape[:2])
+        prediction = prediction.reshape(img.shape[:2]) 
+                       
     else:
         if CLASS_BALANCING:
             weights = compute_imf_weights(train_gt, N_CLASSES, IGNORED_LABELS)
@@ -411,27 +666,31 @@ for run in range(N_RUNS):
 
         if CHECKPOINT is not None:
             model.load_state_dict(torch.load(CHECKPOINT))
-
-        try:
-            train(
-                model,
-                optimizer,
-                loss,
-                train_loader,
-                hyperparams["epoch"],
-                scheduler=hyperparams["scheduler"],
-                device=hyperparams["device"],
-                supervision=hyperparams["supervision"],
-                val_loader=val_loader,
-                display=viz,
-            )
-        except KeyboardInterrupt:
-            # Allow the user to stop the training
-            pass
+        
+        if not ONLY_TEST:
+            try:
+                train(
+                    model,
+                    optimizer,
+                    loss,
+                    train_loader,
+                    hyperparams["epoch"],
+                    scheduler=hyperparams["scheduler"],
+                    device=hyperparams["device"],
+                    supervision=hyperparams["supervision"],
+                    val_loader=val_loader,
+                    display=viz,
+                )
+            except KeyboardInterrupt:
+                # Allow the user to stop the training
+                pass
 
         probabilities = test(model, img, hyperparams)
         prediction = np.argmax(probabilities, axis=-1)
-
+        
+        
+    prediction_total = np.copy(prediction)
+    
     run_results = metrics(
         prediction,
         test_gt,
@@ -445,12 +704,36 @@ for run in range(N_RUNS):
     prediction[mask] = 0
 
     color_prediction = convert_to_color(prediction)
+    color_prediction_total = convert_to_color(prediction_total)
+    
     display_predictions(
         color_prediction,
         viz,
         gt=convert_to_color(test_gt),
         caption="Prediction vs. test ground truth",
     )
+    
+    display_predictions(
+        color_prediction_total,
+        viz,
+        gt=convert_to_color(gt),
+        caption="Prediction total vs. ground truth",
+    )
+    
+    diff_prediction = np.where((color_prediction-convert_to_color(gt)) !=0, color_prediction, np.nan)
+    diff_gt = np.where((color_prediction-convert_to_color(gt)) !=0, convert_to_color(gt), np.nan)
+    # diff_prediction = np.where((prediction-gt) !=0, prediction, np.nan)
+    # diff_gt = np.where((prediction-gt) !=0, gt, np.nan)
+    
+    display_predictions(
+        diff_prediction,
+        viz,
+        diff_gt,
+        caption="(Difference between) Prediction vs. ground truth",
+    )
+    
+    save_prediction(prediction, "prediction" ,MODEL, DATASET, METHOD)
+    save_prediction(np.where((prediction-gt) !=0, prediction, np.nan), "diff_prediction" ,MODEL, DATASET, METHOD)
 
     results.append(run_results)
     show_results(run_results, viz, label_values=LABEL_VALUES)

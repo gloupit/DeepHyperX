@@ -12,6 +12,7 @@ from scipy import io, misc
 import os
 import re
 import torch
+import datetime
 
 def get_device(ordinal):
     # Use GPU ?
@@ -383,7 +384,17 @@ def metrics(prediction, target, ignored_labels=[], n_classes=None):
         float(total * total)
     kappa = (pa - pe) / (1 - pe)
     results["Kappa"] = kappa
-
+    
+    # Compute OCA ACA Kappa
+    oca,kappa2,perclass_CA,aca,ConfMat = classificationEvaluation(target,prediction,n_classes)
+    
+    results["OCA"] = oca
+    results["ACA"] = aca
+    results["kappa2"] = kappa2
+    results["perclass_CA"] = perclass_CA
+    results["ConfMat"] = ConfMat
+    
+    
     return results
 
 
@@ -404,6 +415,12 @@ def show_results(results, vis, label_values=None, agregated=False):
         accuracy = results["Accuracy"]
         F1scores = results["F1 scores"]
         kappa = results["Kappa"]
+        
+        oca = results["OCA"]
+        aca = results["ACA"]
+        kappa2 = results["kappa2"]
+        perclass_CA = results["perclass_CA"]
+        ConfMat = results["ConfMat"]
 
     vis.heatmap(cm, opts={'title': "Confusion matrix",
                           'marginbottom': 150,
@@ -437,7 +454,14 @@ def show_results(results, vis, label_values=None, agregated=False):
                                                       np.std(kappas)))
     else:
         text += "Kappa: {:.03f}\n".format(kappa)
-
+        
+        
+    text += "OCA: {:.03f}\n".format(oca)
+    text += "ACA: {:.03f}\n".format(aca)
+    text += "kappa2: {:.03f}\n".format(kappa2)
+    # text += "perclass_CA: {}\n".format(perclass_CA)
+    # text += "ConfMat: {}\n".format(ConfMat)
+        
     vis.text(text.replace('\n', '<br/>'))
     print(text)
 
@@ -543,3 +567,57 @@ def compute_imf_weights(ground_truth, n_classes=None, ignored_classes=[]):
 def camel_to_snake(name):
     s = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
     return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s).lower()
+
+def classificationEvaluation(label_gtr, label_classif,n_classes):
+    Nb = label_classif.shape[0]
+    label_gtr = label_gtr.astype(int)
+    label_classif = label_classif.astype(int)
+    #print(label_gtr[0])
+    nb_class = n_classes #np.amax(label_gtr)
+    
+    ConfMat = np.zeros((nb_class,nb_class))
+    
+    for i in range(0,Nb):
+        ConfMat[label_gtr[i]-1, label_classif[i]-1] = ConfMat[label_gtr[i]-1, label_classif[i]-1] + 1
+    
+    po = np.sum(np.diag(ConfMat))/Nb;
+    pe = 0
+    
+    for i in range(0,nb_class):
+        pe = pe+np.sum(ConfMat[:,i]*np.sum(ConfMat[i,:]))
+    pe = pe/Nb**2
+    
+    oca = po
+    kappa = (po-pe)/(1-pe)
+    
+    perclass_CA = np.zeros((nb_class))
+    for i in range(0,nb_class):
+        perclass_CA[i] = ConfMat[i,i]/np.sum(ConfMat[i,:])
+    
+    aca = np.mean(perclass_CA)
+    
+    return oca,kappa,perclass_CA,aca,ConfMat
+
+def save_prediction(prediction,name,model_name,dataset_name, method_name=None):
+    time_str = datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+    if method_name != None:
+        path = '/stck/gloupit/' + name + "_" + model_name + "_" + method_name + "_" + dataset_name + "_" + time_str + ".npy"
+    else:
+        path = '/stck/gloupit/' + model_name + "_" + dataset_name + "_" + time_str + ".npy"
+    np.save(file=path, arr=prediction)
+    
+def save_components(components,model_name,method_name,dataset_name):
+    time_str = datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+    path = '/stck/gloupit/' + "components_" + model_name + "_" + method_name + "_" + dataset_name + "_" + time_str + ".npy"
+    assert components.shape == tuple((4,257)), "components size is {}".format(components.shape)    
+    np.save(file=path, arr=components)
+    # components.tofile()
+    
+def spatial_k_fold(train_split_paths, val_split_paths):
+    for train_split, val_split in zip(train_split_paths, val_split_paths):
+        train = np.load(train_split)
+        val = np.load(val_split)
+        yield (train, val)
+        
+# GridSearchCV(RF, {'depth': [100, 1000]}, cv=spatial_k_fold(train_split_paths, val_split_paths))
+    

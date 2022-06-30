@@ -14,6 +14,18 @@ CUSTOM_DATASETS_CONFIG = {
         "download": False,
         "loader": lambda folder: mauzac_loader(folder),
     },
+    "Mauzac_maison_1": {
+        "img": "mauzac_maison_1_img.npy",
+        "gt": "mauzac_maison_1_gt.npy",
+        "download": False,
+        "loader": lambda folder: mauzac_maison_1_loader(folder),
+    },
+    "Mauzac_quartier": {
+        "img": "mauzac_quartier_img.npy",
+        "gt": "mauzac_quartier_gt.npy",
+        "download": False,
+        "loader": lambda folder: mauzac_quartier_loader(folder),
+    },
     "Toulouse": {
         "img": "toulouse_img.npy",
         "gt": "toulouse_gt.npy",
@@ -87,6 +99,58 @@ def mauzac_loader(folder):
 def toulouse_loader(folder):
     img = open_file(folder + "toulouse_img.npy")
     gt = open_file(folder + "toulouse_gt.npy")
+    gt = gt.astype("uint8")
+
+    rgb_bands = (70, 50, 25)
+
+    label_values = [
+        'Untitled', 
+        'Vegetation shadows', 
+        'High vegetation', 
+        'Ground vegetation', 
+        'Dry vegetation',
+        'Bare soil', 
+        'Water body', 
+        'Swimming pool', 
+        'Pool cover', 
+        'Curbstone', 
+        'Tile', 
+        'Asphalt', 
+        'Other shadows'
+    ]
+    ignored_labels = [0]
+    palette = None
+    return img, gt, rgb_bands, ignored_labels, label_values, palette
+
+def mauzac_maison_1_loader(folder):
+    img = open_file(folder + "mauzac_maison_1_img.npy")
+    gt = open_file(folder + "mauzac_maison_1_gt.npy")
+    gt = gt.astype("uint8")
+
+    rgb_bands = (70, 50, 25)
+
+    label_values = [
+        'Untitled', 
+        'Vegetation shadows', 
+        'High vegetation', 
+        'Ground vegetation', 
+        'Dry vegetation',
+        'Bare soil', 
+        'Water body', 
+        'Swimming pool', 
+        'Pool cover', 
+        'Curbstone', 
+        'Tile', 
+        'Asphalt', 
+        'Other shadows'
+    ]
+    ignored_labels = [0]
+    palette = None
+    return img, gt, rgb_bands, ignored_labels, label_values, palette
+
+def mauzac_quartier_loader(folder):
+    img = open_file(folder + "mauzac_quartier_img.npy")
+    gt = open_file(folder + "mauzac_quartier_gt.npy")
     gt = gt.astype("uint8")
 
     rgb_bands = (70, 50, 25)

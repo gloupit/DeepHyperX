@@ -3,7 +3,7 @@ from __future__ import print_function
 from __future__ import division
 import joblib
 import os
-from utils import convert_to_color_, convert_from_color_, get_device
+from utils import convert_to_color_, convert_from_color_, get_device, metrics
 from datasets import open_file
 from models import get_model, test
 import numpy as np
@@ -64,6 +64,13 @@ group_test.add_argument(
     help="Path to an image on which to run inference.",
 )
 group_test.add_argument(
+    "--test_gt",
+    type=str,
+    default=None,
+    nargs="?",
+    help="Path to an gt image",
+)
+group_test.add_argument(
     "--only_test",
     type=str,
     default=None,
@@ -105,6 +112,7 @@ MODEL = args.model
 MAT = args.mat
 N_CLASSES = args.n_classes
 INFERENCE = args.image
+TEST_GT = args.test_gt
 TEST_STRIDE = args.test_stride
 CHECKPOINT = args.checkpoint
 
@@ -155,8 +163,17 @@ else:
     model.load_state_dict(torch.load(CHECKPOINT))
     probabilities = test(model, img, hyperparams)
     prediction = np.argmax(probabilities, axis=-1)
+    
+    run_results = metrics(
+        prediction,
+        TEST_GT,
+        ignored_labels=hyperparams["ignored_labels"],
+        n_classes=N_CLASSES,
+    )
+    
+    
 
-filename = dirname + "/" + basename + ".tif"
+filename = dirname + "/" + basename #+ ".tif"
 io.imsave(filename, prediction)
 basename = "color_" + basename
 filename = dirname + "/" + basename + ".tif"
