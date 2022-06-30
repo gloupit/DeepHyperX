@@ -613,11 +613,17 @@ def save_components(components,model_name,method_name,dataset_name):
     np.save(file=path, arr=components)
     # components.tofile()
     
-def spatial_k_fold(train_split_paths, val_split_paths):
-    for train_split, val_split in zip(train_split_paths, val_split_paths):
+def spatial_k_fold(train_gt, train_split_paths):
+    coord = np.where(train_gt != 0)
+    for train_split in train_split_paths:
+        mask_train = np.zeros(coord[0].shape[0])
+        mask_val = np.ones(coord[0].shape[0])
         train = np.load(train_split)
-        val = np.load(val_split)
-        yield (train, val)
+        mask_train[train[coord] !=0 ] = 1
+        mask_val[train[coord] !=0 ] = 0
+        assert mask_train.sum() + mask_val.sum() == mask_train.shape[0]
+        assert mask_train.sum() > 0 and mask_val.sum() > 0
+        yield (mask_train.astype(np.bool_), mask_val.astype(np.bool_))
         
 # GridSearchCV(RF, {'depth': [100, 1000]}, cv=spatial_k_fold(train_split_paths, val_split_paths))
     

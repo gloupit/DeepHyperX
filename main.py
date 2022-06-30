@@ -389,11 +389,11 @@ train_split_paths = [path + "train_gt1.npy",
                      path + "train_gt4.npy",
                      path + "train_gt5.npy"]
 
-val_split_paths =   [path + "val_gt1.npy",
-                     path + "val_gt2.npy",
-                     path + "val_gt3.npy",
-                     path + "val_gt4.npy",
-                     path + "val_gt5.npy"]
+# val_split_paths =   [path + "val_gt1.npy",
+#                      path + "val_gt2.npy",
+#                      path + "val_gt3.npy",
+#                      path + "val_gt4.npy",
+#                      path + "val_gt5.npy"]
 
 # Instantiate the experiment based on predefined networks
 hyperparams.update(
@@ -433,7 +433,10 @@ for run in range(N_RUNS):
         test_gt = open_file(TEST_GT)
     else:
         # Sample random training spectra
-        train_gt, test_gt = sample_gt(gt, SAMPLE_PERCENTAGE, mode=SAMPLING_MODE)
+        if not CV:
+            train_gt, test_gt = sample_gt(gt, SAMPLE_PERCENTAGE, mode=SAMPLING_MODE)
+        else:
+            train_gt, test_gt = gt, np.zeros_like(gt)
     if ONLY_TEST:
         test_gt = gt
     print(
@@ -513,42 +516,75 @@ for run in range(N_RUNS):
             img_PCA = np.double(np.round(img_PCA*65535))
         
         lamb_area = compute_profiles.compute_area_thresholds(spatial_resolution, nb_thresholds)
-        lamb_area = np.dot(lamb_area,1/30)
+        # lamb_area = np.dot(lamb_area,1/30)
         # lamb_area=[770, 1538, 2307, 3076, 3846, 4615, 5384, 6153, 6923, 7692, 8461, 9230, 10000, 10769]
         lamb_moi = [0.2, 0.3, 0.4, 0.5]
         
-        if   (METHOD == "GRAY"):
-            features = compute_profiles.compute_GRAY(img_PCA)
-        elif (METHOD == "AP"):
-            features = compute_profiles.compute_AP(img_PCA, lamb_area, lamb_moi, adj)
-        elif (METHOD == "MAX"):
-            features = compute_profiles.compute_MAX(img_PCA, lamb_area, lamb_moi, adj)
-        elif (METHOD == "MIN"):
-            features = compute_profiles.compute_MIN(img_PCA, lamb_area, lamb_moi, adj)
-        elif (METHOD == "SDAP"):
-            features = compute_profiles.compute_SDAP(img_PCA, lamb_area, lamb_moi, adj)
-        elif (METHOD == "LFAP"):
-            features = compute_profiles.compute_LFAP(img_PCA, lamb_area, lamb_moi, adj)
-        elif (METHOD == "LFSDAP"):
-            features = compute_profiles.compute_LFSDAP(img_PCA, lamb_area, lamb_moi, adj)
-        elif (METHOD == "HAP"):
-            features = compute_profiles.compute_HAP(img_PCA, lamb_area, lamb_moi, adj)
-        elif (METHOD == "HSDAP"):
-            features = compute_profiles.compute_HSDAP(img_PCA, lamb_area, lamb_moi, adj)
-        elif (METHOD == "ALPHA"):
-            features = compute_profiles.compute_ALPHA(img_PCA, lamb_area, lamb_moi, adj)
-        elif (METHOD == "OMEGA"):
-            features = compute_profiles.compute_OMEGA(img_PCA, lamb_area, lamb_moi, adj)
-        elif (METHOD == "FP_AREA" or METHOD == "FP_AREA_MEAN" or METHOD == "FP_MEAN"):
-            features = compute_profiles.compute_FP(img_PCA, lamb_area, lamb_moi, adj, METHOD)
+        one_by_one = False
+        if one_by_one:
+        
+            hyperparams.update({'patch_size': 15, 'center_pixel': True, 
+                                'flip_augmentation': False, 
+                                'supervision': 'full',
+                                'radiation_augmentation': False,
+                                'mixture_augmentation': False})
+            
+            train_dataset = HyperX(img, train_gt, **hyperparams)
+            train_loader = data.DataLoader(
+                train_dataset,
+                batch_size=1,
+                # pin_memory=hyperparams['device'],
+                shuffle=False,
+            )
+            
+            features = []
+            for cube, _ in train_loader:
+                cube = cube[0,0,:,:,:].numpy().transpose(1,2,0)
+                cube = np.dot(cube,np.transpose(pca.components_))
+                features_ = compute_profiles.compute_FP(cube, lamb_area, lamb_moi, adj, METHOD)
+                features.append(features_)
+                
+            features = [e.reshape(1, -1, e.shape[-2], e.shape[-1]) for e in features]
+            features=np.vstack(features)
+            X_train = features[:,:,features.shape[-2]//2,features.shape[-1]//2]
+        
         else:
-            print("Method not implemented!")
+            if   (METHOD == "GRAY"):
+                features = compute_profiles.compute_GRAY(img_PCA)
+            elif (METHOD == "AP"):
+                features = compute_profiles.compute_AP(img_PCA, lamb_area, lamb_moi, adj)
+            elif (METHOD == "MAX"):
+                features = compute_profiles.compute_MAX(img_PCA, lamb_area, lamb_moi, adj)
+            elif (METHOD == "MIN"):
+                features = compute_profiles.compute_MIN(img_PCA, lamb_area, lamb_moi, adj)
+            elif (METHOD == "SDAP"):
+                features = compute_profiles.compute_SDAP(img_PCA, lamb_area, lamb_moi, adj)
+            elif (METHOD == "LFAP"):
+                features = compute_profiles.compute_LFAP(img_PCA, lamb_area, lamb_moi, adj)
+            elif (METHOD == "LFSDAP"):
+                features = compute_profiles.compute_LFSDAP(img_PCA, lamb_area, lamb_moi, adj)
+            elif (METHOD == "HAP"):
+                features = compute_profiles.compute_HAP(img_PCA, lamb_area, lamb_moi, adj)
+            elif (METHOD == "HSDAP"):
+                features = compute_profiles.compute_HSDAP(img_PCA, lamb_area, lamb_moi, adj)
+            elif (METHOD == "ALPHA"):
+                features = compute_profiles.compute_ALPHA(img_PCA, lamb_area, lamb_moi, adj)
+            elif (METHOD == "OMEGA"):
+                features = compute_profiles.compute_OMEGA(img_PCA, lamb_area, lamb_moi, adj)
+            elif (METHOD == "FP_AREA" or METHOD == "FP_AREA_MEAN" or METHOD == "FP_MEAN"):
+                features = compute_profiles.compute_FP(img_PCA, lamb_area, lamb_moi, adj, METHOD)
+            else:
+                print("Method not implemented!")
 
         features = features.transpose(1, 2, 0)
         # pdb.set_trace()
         
         if not ONLY_TEST:    
-            X_train, y_train = build_dataset(features, train_gt, ignored_labels=IGNORED_LABELS)
+            if one_by_one:
+                _, y_train = build_dataset(features, train_gt, ignored_labels=IGNORED_LABELS)
+            else:
+                X_train, y_train = build_dataset(features, train_gt, ignored_labels=IGNORED_LABELS)
+            #
             # pdb.set_trace()
             
             if not CV:
@@ -566,11 +602,12 @@ for run in range(N_RUNS):
                 for score in scores:
                     print("# Tuning hyper-parameters for %s" % score)
                     print()
-                    truc = spatial_k_fold(train_split_paths, val_split_paths)
+                    # truc = spatial_k_fold(train_split_paths, val_split_paths)
                     # pdb.set_trace()
                     # clf = sklearn.model_selection.GridSearchCV(RandomForestClassifier(random_state=0), param_grid , cv=spatial_k_fold(train_split_paths, val_split_paths),scoring="%s_macro" % score)
                     # clf = sklearn.model_selection.RandomizedSearchCV(RandomForestClassifier(random_state=0), param_distributions=param_grid, n_iter = 1, cv=spatial_k_fold(train_split_paths, val_split_paths),scoring="%s_macro" % score,random_state=0)
-                    clf = sklearn.model_selection.RandomizedSearchCV(RandomForestClassifier(random_state=0), param_distributions=param_grid, n_iter = 1)#, cv=spatial_k_fold(train_split_paths, val_split_paths))
+                    clf = sklearn.model_selection.GridSearchCV(RandomForestClassifier(random_state=0), param_grid=param_grid, cv=spatial_k_fold(train_gt, train_split_paths))
+                    
                     print(clf.get_params())
                     # clf.fit(X_train, y=y_train,groups=None, fit_params=clf.get_params)   #build the forest of trees
                     # pdb.set_trace()
