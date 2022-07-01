@@ -520,7 +520,7 @@ for run in range(N_RUNS):
         # lamb_area=[770, 1538, 2307, 3076, 3846, 4615, 5384, 6153, 6923, 7692, 8461, 9230, 10000, 10769]
         lamb_moi = [0.2, 0.3, 0.4, 0.5]
         
-        one_by_one = False
+        one_by_one = True
         if one_by_one:
         
             hyperparams.update({'patch_size': 15, 'center_pixel': True, 
@@ -576,12 +576,15 @@ for run in range(N_RUNS):
             else:
                 print("Method not implemented!")
 
-        features = features.transpose(1, 2, 0)
-        # pdb.set_trace()
+            features = features.transpose(1, 2, 0)
+        pdb.set_trace()
+        # (Pdb) features.shape
+        # (2232, 152, 15, 15)
+
         
         if not ONLY_TEST:    
             if one_by_one:
-                _, y_train = build_dataset(features, train_gt, ignored_labels=IGNORED_LABELS)
+                _, y_train = build_dataset(img_PCA, train_gt, ignored_labels=IGNORED_LABELS)
             else:
                 X_train, y_train = build_dataset(features, train_gt, ignored_labels=IGNORED_LABELS)
             #
@@ -592,11 +595,16 @@ for run in range(N_RUNS):
                 clf.fit(X_train,y_train)
                 save_model(clf, MODEL, DATASET)
             else:
-                param_grid = {'max_depth': [10,50,100],
-                      'max_features': ['sqrt', 'log2'],
-                      'min_samples_leaf': [1, 2, 4],
-                      'min_samples_split': [2, 5, 10],
-                      'n_estimators': [10,100,200]}
+                # param_grid = {'max_depth': [10,50,100],
+                #       'max_features': ['sqrt', 'log2'],
+                #       'min_samples_leaf': [1, 2, 4],
+                #       'min_samples_split': [2, 5, 10],
+                #       'n_estimators': [10,100,200]}
+                param_grid = {'max_depth': [50],
+                      'max_features': ['sqrt'],
+                      'min_samples_leaf': [2],
+                      'min_samples_split': [5],
+                      'n_estimators': [100]}
                 
                 scores = ["precision", "recall"]
                 for score in scores:
@@ -606,7 +614,9 @@ for run in range(N_RUNS):
                     # pdb.set_trace()
                     # clf = sklearn.model_selection.GridSearchCV(RandomForestClassifier(random_state=0), param_grid , cv=spatial_k_fold(train_split_paths, val_split_paths),scoring="%s_macro" % score)
                     # clf = sklearn.model_selection.RandomizedSearchCV(RandomForestClassifier(random_state=0), param_distributions=param_grid, n_iter = 1, cv=spatial_k_fold(train_split_paths, val_split_paths),scoring="%s_macro" % score,random_state=0)
+                    
                     clf = sklearn.model_selection.GridSearchCV(RandomForestClassifier(random_state=0), param_grid=param_grid, cv=spatial_k_fold(train_gt, train_split_paths))
+                    # clf = sklearn.model_selection.RandomizedSearchCV(RandomForestClassifier(random_state=0), param_distributions=param_grid, n_iter = 1, cv=spatial_k_fold(train_gt, train_split_paths),scoring="%s_macro" % score,random_state=0)
                     
                     print(clf.get_params())
                     # clf.fit(X_train, y=y_train,groups=None, fit_params=clf.get_params)   #build the forest of trees

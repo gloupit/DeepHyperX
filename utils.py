@@ -616,6 +616,7 @@ def save_components(components,model_name,method_name,dataset_name):
 def spatial_k_fold(train_gt, train_split_paths):
     coord = np.where(train_gt != 0)
     for train_split in train_split_paths:
+        print('\n{}\n'.format(train_split))
         mask_train = np.zeros(coord[0].shape[0])
         mask_val = np.ones(coord[0].shape[0])
         train = np.load(train_split)
